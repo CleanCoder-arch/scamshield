@@ -3,6 +3,7 @@ import { test, type TestContext } from "node:test";
 import { Window as TestWindow } from "happy-dom";
 import { act, StrictMode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import Loading from "../app/loading";
 import { LaunchSplash } from "../components/launch-splash";
 
 const sessionKey = "scamshield:launch-splash";
@@ -114,6 +115,13 @@ test("renders no splash in the server response", () => {
   assert.equal(renderToStaticMarkup(<LaunchSplash />), "");
 });
 
+test("keeps the server-rendered fallback visually quiet before the splash mounts", () => {
+  const html = renderToStaticMarkup(<Loading />);
+  assert.match(html, /role="status"/);
+  assert.match(html, /<span class="sr-only">Loading page…<\/span>/);
+  assert.doesNotMatch(html, /<svg/);
+});
+
 test("checks the first session after a frame and removes the splash after its hold and fade", async (t) => {
   const page = await setup(t);
   await page.render();
@@ -132,7 +140,7 @@ test("checks the first session after a frame and removes the splash after its ho
   assert.doesNotMatch(splash.textContent ?? "", /skip intro/i);
   assert.equal(page.pendingTimeouts(), 1);
 
-  await page.advance(949);
+  await page.advance(1599);
   assert.equal(page.splash()?.dataset.phase, "visible");
   await page.advance(1);
   assert.equal(page.splash()?.dataset.phase, "leaving");
@@ -156,7 +164,7 @@ test("changing route content leaves the splash timer alone and does not replay i
   await page.render("/rights");
   assert.equal(page.splash(), splash);
   assert.equal(page.pendingFrames(), 0);
-  await page.advance(450);
+  await page.advance(1100);
   assert.equal(page.splash()?.dataset.phase, "leaving");
   await page.advance(300);
   assert.equal(page.splash(), null);

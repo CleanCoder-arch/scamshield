@@ -4,7 +4,7 @@ import { ShieldCheck } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 
 const SESSION_KEY = "scamshield:launch-splash";
-const HOLD_MS = 950;
+const HOLD_MS = 1600;
 const FADE_MS = 300;
 const timing = {
   "--splash-hold": `${HOLD_MS}ms`,
