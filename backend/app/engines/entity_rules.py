@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 import re
 from urllib.parse import parse_qs, urlsplit
 
@@ -42,6 +43,37 @@ _LONG_NUMBER = re.compile(r"(?<![\d+])(?:\+?\d(?:[ \t.()-]{0,3}\d){5,})(?!\d)")
 _LABELED_CODE = re.compile(
     r"(\b(?:otp|pin|cvv|passcode|(?:security|verification)\s+code)\b[ \t]*(?:is[ \t]+)?[:=-]?[ \t]*)\d{3,8}\b",
     re.IGNORECASE,
+)
+_SENTENCE_BREAK = re.compile(r"[!?;]+(?=\s|$)|(?<!\brs)\.(?=\s|$)|\n\s*\n")
+_SAFETY_ADVICE = re.compile(
+    r"\b(?:beware\s+of|watch\s+out\s+for|safety\s+(?:tip|advice|reminder)|red\s+flag|(?:is|are)\s+(?:a\s+)?scam|"
+    r"trying\s+to\s+scam\s+you|(?:scammers?|fraudsters?)\s+(?:may|might|often|ask|tell))\b"
+)
+_NON_REQUEST_LEAD = re.compile(
+    r"\b(?:(?:never|avoid|don['’]t|not|shouldn['’]t|won['’]t|no\s+(?:need|reason))"
+    r"\s+(?:(?:ever|to|need\s+to|have\s+to|be\s+asked\s+to|(?:be\s+)?required\s+to)\s+)?|"
+    r"(?:if\s+(?:you\s+(?:are|were)\s+)?(?:asked|told)|(?:anyone|someone)\s+(?:who\s+)?asks?\s+you)\s+to\s+|"
+    r"(?:we|i|they|(?:the\s+|your\s+|our\s+)?(?:company|employer|team))\s+(?:(?:will|can|would|must)\s+)?)$"
+)
+_AMOUNT = r"(?:[₹$£€]\s*|(?:rs\.?|inr)\s*)?\d[\d,]*(?:\.\d+)?"
+_UPI_PIN_REQUEST = re.compile(r"\b(?:enter|type|key\s+in|provide|share|submit|use)\s+(?:(?:your|the)\s+)?(?:upi\s+)?pin\b")
+_UPI_INBOUND = re.compile(
+    rf"\b(?:receive|get|claim|release|unlock)\s+(?:(?:your|the|this)\s+)?(?:{_AMOUNT}\s+)?"
+    r"(?:refund|cashback|money|payment|funds|amount)\b"
+)
+_REFUND = re.compile(r"\b(?:refund|cashback)\b")
+_REFUND_ACTION = re.compile(r"\b(?:collect\s+request|(?:receive|get|claim|release|unlock)\s+it)\b")
+_REMOTE_WORK = re.compile(r"\b(?:remote|work[- ](?:from|at)[- ]home|wfh|home[- ]based|online\s+(?:work|job))\b")
+_JOB_OFFER = re.compile(r"\b(?:jobs?|positions?|roles?|vacanc(?:y|ies)|hir(?:ing|ed)|employment)\b")
+_JOB_COMPENSATION = re.compile(
+    rf"\b(?:high[- ]pay(?:ing)?|(?:earn(?:ing)?|paying|salary(?:\s+of)?|pay\s+of)[\s:=]+"
+    rf"(?:up\s+to\s+)?{_AMOUNT})\b|(?<![\w,]){_AMOUNT}\s*(?:per\s+|/|a\s+)(?:hour|day|week|month)\b"
+)
+_JOB_FEE_REQUEST = re.compile(
+    r"\b(?:pay|send|deposit|transfer)\s+(?:us\s+)?(?:(?:an?|the|any|your)\s+)?"
+    r"(?:(?:advance|up[- ]?front)\s+)?"
+    rf"(?:{_AMOUNT}\s+(?:(?:for|as)\s+(?:(?:an?|the|your)\s+)?)?)?"
+    r"(?:registration|training)\s+(?:fees?|charges?)\b"
 )
 
 
@@ -168,6 +200,19 @@ def redact_text(text: str) -> str:
     return _LONG_NUMBER.sub("[number]", text)
 
 
+def _affirms(sentence: str, phrase: re.Pattern[str]) -> bool:
+    return any(
+        not _NON_REQUEST_LEAD.search(sentence[max(match.start() - 80, 0):match.start()])
+        for match in phrase.finditer(sentence)
+    )
+
+
+def _request_sentences(text: str, request: re.Pattern[str]) -> Iterator[str]:
+    for sentence in _SENTENCE_BREAK.split(text):
+        if not _SAFETY_ADVICE.search(sentence) and _affirms(sentence, request):
+            yield sentence
+
+
 def analyze_sms_risk(message: str, phishing_probability: float, *, has_links: bool) -> dict:
     """Apply CyberGuard's SMS scoring rules to model probability and text signals."""
     text = message.lower()
@@ -200,6 +245,17 @@ def analyze_sms_risk(message: str, phishing_probability: float, *, has_links: bo
         add_points(15, "Urgency is combined with account, credential, or financial-related content.")
     if prize and has_links:
         add_points(15, "Prize/reward language is combined with a web link.")
+
+    has_refund = _REFUND.search(text) is not None
+    if _UPI_CONTEXT.search(text) and any(
+        _affirms(sentence, _UPI_INBOUND) or (has_refund and _affirms(sentence, _REFUND_ACTION))
+        for sentence in _request_sentences(text, _UPI_PIN_REQUEST)
+    ):
+        add_points(35, "Requests a UPI PIN to receive a refund or payment.")
+    if _REMOTE_WORK.search(text) and _JOB_OFFER.search(text) and _JOB_COMPENSATION.search(text) and any(
+        _request_sentences(text, _JOB_FEE_REQUEST)
+    ):
+        add_points(55, "Requests an upfront registration or training fee for a paid remote job.")
 
     raw_score = sum(step["delta"] for step in adjustments)
     score = min(raw_score, 100)

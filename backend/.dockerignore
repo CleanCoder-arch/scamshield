@@ -1,0 +1,10 @@
+# Send only the runtime source, model artifacts, and dependency manifest.
+**
+!requirements.txt
+!app/
+!app/**
+!models/
+!models/**
+**/.env*
+**/__pycache__/
+**/*.py[cod]

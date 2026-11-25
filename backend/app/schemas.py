@@ -62,8 +62,16 @@ class ThreatResult(BaseModel):
     domain_age_days: int | None = Field(default=None, ge=0)
 
 
+AIStatus = Literal["completed", "unavailable", "skipped"]
+AIReason = Literal[
+    "missing_api_key", "quota_exceeded", "network_error", "provider_error",
+    "invalid_response", "invalid_api_key", "no_input",
+]
+
+
 class AIResult(BaseModel):
-    status: Literal["completed", "unavailable", "skipped"]
+    status: AIStatus
+    reason: AIReason | None = None
     scam_type: ScamType = ScamType.UNKNOWN
     explanation: str = ""
     actions: list[str] = Field(default_factory=list)

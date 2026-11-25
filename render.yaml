@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: scamshield-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - backend/**
+        - render.yaml
+    envVars:
+      # Set the deployed frontend origin in the Render dashboard.
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: APP_API_SALT
+        generateValue: true
+      - key: MAX_CONCURRENT_SCANS
+        value: "2"

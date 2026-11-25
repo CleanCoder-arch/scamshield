@@ -14,6 +14,7 @@ from app.engines.llm_vision import GeminiResult, GeminiVision
 from app.engines.ml_engine import MLEngine
 from app.engines.threat_intel import ThreatIntel
 from app.schemas import (
+    AIReason,
     AIResult,
     Entities,
     RiskLevel,
@@ -28,6 +29,14 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 ENTITY_WEIGHTS = {"apk_link": 20, "url_shortener": 10, "urgent_kyc": 10}
+IMAGE_AI_ERRORS: dict[AIReason, tuple[int, str]] = {
+    "missing_api_key": (503, "Screenshot analysis requires a Gemini API key on the server."),
+    "invalid_api_key": (503, "Gemini rejected the server's API credentials."),
+    "quota_exceeded": (429, "The Gemini request quota has been reached. Try again later."),
+    "network_error": (503, "The server could not reach Gemini. Try again shortly."),
+    "provider_error": (502, "Gemini could not process the screenshot."),
+    "invalid_response": (502, "Gemini returned an unreadable screenshot result."),
+}
 
 
 class ScanError(Exception):
@@ -79,6 +88,7 @@ def merge_assessment(
 def public_ai_result(verdict: GeminiResult) -> AIResult:
     return AIResult(
         status=verdict.status,
+        reason=verdict.reason,
         scam_type=verdict.scam_type,
         explanation=redact_text(verdict.explanation),
         actions=[redact_text(action) for action in verdict.actions],
@@ -133,6 +143,10 @@ class ScanService:
                 raise ValueError("An image media type is required.")
             image_verdict = await self.ai.classify_image(image, mime_type)
             if image_verdict.status != "completed":
+                reason = image_verdict.reason
+                if reason in IMAGE_AI_ERRORS:
+                    status_code, detail = IMAGE_AI_ERRORS[reason]
+                    raise ScanError(status_code, f"gemini_{reason}", detail)
                 raise ScanError(503, "image_analysis_unavailable", "Screenshot analysis is unavailable.")
             text = (image_verdict.extracted_text or "")[:MAX_TEXT_LENGTH]
 
@@ -149,7 +163,9 @@ class ScanService:
 
         ai_verdict = image_verdict or await self.ai.classify_text(redact_text(text), sorted(set(hits)))
         ai = public_ai_result(ai_verdict)
-        yield ScanEvent(event="ai_verdict", data={"status": ai.status, "scam_type": ai.scam_type})
+        yield ScanEvent(
+            event="ai_verdict", data={"status": ai.status, "reason": ai.reason, "scam_type": ai.scam_type}
+        )
 
         breakdown, scam_type = merge_assessment(local_score, entities, intel, ai)
         risk_score = breakdown.final_score

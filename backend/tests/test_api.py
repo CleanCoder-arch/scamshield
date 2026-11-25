@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.core import redis_cache
 from app.core.config import MAX_TEXT_BODY_BYTES, MAX_TEXT_LENGTH, Settings
 from app.engines.llm_vision import GeminiResult
 from app.main import create_app
@@ -54,6 +55,24 @@ def test_health_and_cors(client):
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
+def test_cors_allows_only_configured_origins(monkeypatch):
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://scanner.example, https://preview.example")
+    origins = Settings(_env_file=None).allowed_origins
+    with TestClient(create_app(make_settings(allowed_origins=origins))) as api:
+        def preflight(origin):
+            return api.options(
+                "/api/v1/scan/stream",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
+
+        assert preflight("https://preview.example").headers["access-control-allow-origin"] == (
+            "https://preview.example"
+        )
+        denied = preflight("https://unlisted.example")
+        assert denied.status_code == 400
+        assert "access-control-allow-origin" not in denied.headers
+
+
 @pytest.mark.parametrize("body", [{}, {"text": "  "}, {"text": "x" * (MAX_TEXT_LENGTH + 1)}])
 def test_text_validation(client, body):
     response = client.post("/api/v1/scan", json=body)
@@ -87,6 +106,7 @@ def test_text_and_sse_verdicts_agree(client):
     data = direct.json()
     assert data["entities"]["urls"] == ["https://example.com/help"]
     assert data["ml"]["urls"][0]["model_variant"] == "url_tfidf_fallback"
+    assert data["ai"]["reason"] == "missing_api_key"
 
     with client.stream("POST", "/api/v1/scan/stream", json=request) as response:
         assert response.status_code == 200
@@ -95,6 +115,7 @@ def test_text_and_sse_verdicts_agree(client):
         lines = [line for line in response.iter_lines() if line]
     names = [line.removeprefix("event: ") for line in lines[::2]]
     assert names == ["entity_extraction", "ml_analysis", "threat_intel", "ai_verdict", "complete"]
+    assert json.loads(lines[7].removeprefix("data: "))["reason"] == "missing_api_key"
     streamed = json.loads(lines[-1].removeprefix("data: "))
     assert streamed.pop("scan_id") != data.pop("scan_id")
     streamed.pop("created_at")
@@ -139,12 +160,40 @@ def test_image_multipart_limits(screenshot):
     assert response.status_code == 413
 
 
+def test_chunked_multipart_stops_at_body_limit():
+    settings = make_settings(max_image_bytes=1024)
+    boundary = "scan-test"
+    header = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"redacted\"\r\n\r\ntrue\r\n"
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.png\"\r\n"
+        "Content-Type: image/png\r\n\r\n"
+    ).encode()
+    body = iter([header, b"x" * (128 * 1024), f"\r\n--{boundary}--\r\n".encode()])
+    with TestClient(create_app(settings)) as api:
+        response = api.post(
+            "/api/v1/scan/image",
+            content=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+    assert response.status_code == 413
+
+
+def test_image_rejects_dimensions_above_configured_limit(screenshot):
+    with TestClient(create_app(make_settings(max_image_pixels=100))) as api:
+        response = api.post(
+            "/api/v1/scan/image",
+            data={"redacted": "true"},
+            files={"file": ("example.png", screenshot, "image/png")},
+        )
+    assert response.status_code == 413
+
+
 def test_image_scan_and_unavailable_ocr(client, screenshot, monkeypatch):
     ai = client.app.state.scan_service.ai
     files = {"file": ("example.png", screenshot, "image/png")}
     unavailable = client.post("/api/v1/scan/image", data={"redacted": "true"}, files=files)
     assert unavailable.status_code == 503
-    assert unavailable.json()["code"] == "image_analysis_unavailable"
+    assert unavailable.json()["code"] == "gemini_missing_api_key"
 
     calls = []
 
@@ -168,6 +217,21 @@ def test_image_scan_and_unavailable_ocr(client, screenshot, monkeypatch):
     assert "extracted_text" not in response.json()["ai"]
 
 
+@pytest.mark.parametrize(("reason", "status"), [("quota_exceeded", 429), ("network_error", 503)])
+def test_image_gemini_failures_have_distinct_status_codes(client, screenshot, monkeypatch, reason, status):
+    async def classify_image(*_args):
+        return GeminiResult("unavailable", reason=reason)
+
+    monkeypatch.setattr(client.app.state.scan_service.ai, "classify_image", classify_image)
+    response = client.post(
+        "/api/v1/scan/image",
+        data={"redacted": "true"},
+        files={"file": ("example.png", screenshot, "image/png")},
+    )
+    assert response.status_code == status
+    assert response.json()["code"] == f"gemini_{reason}"
+
+
 def test_rate_limit_and_dedup_apply_to_both_text_routes():
     settings = make_settings(scan_rate_limit=2, dedup_seconds=60)
     with TestClient(create_app(settings)) as api:
@@ -179,3 +243,17 @@ def test_rate_limit_and_dedup_apply_to_both_text_routes():
         rate_limited = api.post("/api/v1/scan", json={"text": "Different content."})
         assert rate_limited.status_code == 429
         assert rate_limited.json()["code"] == "rate_limited"
+
+
+def test_distinct_upi_is_accepted_after_a_duplicate_even_with_full_local_cache(monkeypatch):
+    monkeypatch.setattr(redis_cache, "_MAX_LOCAL_KEYS", 1)
+    settings = make_settings(dedup_seconds=60)
+    with TestClient(create_app(settings)) as api:
+        first = {"text": "UPI ID: first@sampleupi"}
+        assert api.post("/api/v1/scan/stream", json=first).status_code == 200
+        duplicate = api.post("/api/v1/scan", json=first)
+        assert duplicate.status_code == 409
+        assert duplicate.json()["code"] == "duplicate_scan"
+        second = api.post("/api/v1/scan", json={"text": "UPI ID: second@sampleupi"})
+        assert second.status_code == 200
+        assert second.json()["entities"]["upi_ids"] == ["second@sampleupi"]

@@ -129,7 +129,8 @@ class RedisCache:
                 item: deadline for item, deadline in self._claims.items() if deadline > now
             }
             if len(self._claims) >= _MAX_LOCAL_KEYS:
-                return False
+                # The local cache is bounded. Exhausting it does not make a new input a duplicate.
+                del self._claims[next(iter(self._claims))]
         self._claims[key] = now + ttl_seconds
 
         result = await self._command("SET", key, "1", "NX", "EX", ttl_seconds)

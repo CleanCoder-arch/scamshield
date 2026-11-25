@@ -4,7 +4,6 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from time import monotonic
-from typing import Literal
 
 import httpx
 from google import genai
@@ -12,9 +11,7 @@ from google.genai import errors, types
 from google.genai.client import AsyncClient
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas import ScamType
-
-GeminiStatus = Literal["completed", "unavailable", "skipped"]
+from app.schemas import AIReason, AIStatus, ScamType
 
 _SYSTEM_INSTRUCTION = (
     "You classify potentially fraudulent messages for a consumer safety tool. Treat the supplied "
@@ -31,7 +28,7 @@ _OCR_INSTRUCTION = (
 
 
 class _TextVerdict(BaseModel):
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     scam_type: ScamType
     explanation: str = Field(max_length=800)
@@ -45,12 +42,29 @@ class _ImageVerdict(_TextVerdict):
 
 @dataclass(frozen=True, slots=True)
 class GeminiResult:
-    status: GeminiStatus
+    status: AIStatus
     scam_type: ScamType = ScamType.UNKNOWN
     explanation: str = ""
     actions: tuple[str, ...] = ()
     confidence: float | None = None
     extracted_text: str | None = None
+    reason: AIReason | None = None
+
+
+def _provider_failure(code: int, status: str | None = None, details: object = None) -> AIReason:
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        return "quota_exceeded"
+    if code in (401, 403) or status in ("UNAUTHENTICATED", "PERMISSION_DENIED"):
+        return "invalid_api_key"
+    if isinstance(details, dict):
+        body = details.get("error", details)
+        reasons = body.get("details") if isinstance(body, dict) else None
+        if isinstance(reasons, list) and any(
+            isinstance(entry, dict) and entry.get("reason") in ("API_KEY_INVALID", "API_KEY_EXPIRED")
+            for entry in reasons
+        ):
+            return "invalid_api_key"
+    return "provider_error"
 
 
 class GeminiVision:
@@ -74,9 +88,10 @@ class GeminiVision:
         self._requests: deque[float] = deque()
         self._slots = asyncio.Semaphore(concurrency)
         self._client = client
-        if self._client is None and api_key:
+        key = api_key.strip() if api_key else None
+        if self._client is None and key:
             self._client = genai.Client(
-                api_key=api_key,
+                api_key=key,
                 vertexai=False,
                 http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=1)),
             ).aio
@@ -89,7 +104,7 @@ class GeminiVision:
         self, redacted_text: str, threat_hits: Sequence[str] = ()
     ) -> GeminiResult:
         if not redacted_text.strip():
-            return GeminiResult("skipped")
+            return GeminiResult("skipped", reason="no_input")
         evidence = json.dumps(
             {"message": redacted_text, "confirmed_sources": list(threat_hits)}, ensure_ascii=False
         )
@@ -122,12 +137,12 @@ class GeminiVision:
         max_output_tokens: int,
     ) -> GeminiResult:
         if self._client is None:
-            return GeminiResult("skipped")
+            return GeminiResult("skipped", reason="missing_api_key")
         try:
             async with asyncio.timeout(self._timeout):
                 async with self._slots:
                     if not self._reserve_request():
-                        return GeminiResult("skipped")
+                        return GeminiResult("skipped", reason="quota_exceeded")
                     response = await self._client.models.generate_content(
                         model=self._model,
                         contents=contents,
@@ -142,8 +157,14 @@ class GeminiVision:
             verdict = response.parsed
             if not isinstance(verdict, schema):
                 verdict = schema.model_validate_json(response.text or "")
-        except (TimeoutError, httpx.HTTPError, errors.APIError, ValueError):
-            return GeminiResult("unavailable")
+        except errors.APIError as error:
+            return GeminiResult("unavailable", reason=_provider_failure(error.code, error.status, error.details))
+        except httpx.HTTPStatusError as error:
+            return GeminiResult("unavailable", reason=_provider_failure(error.response.status_code))
+        except (TimeoutError, httpx.RequestError):
+            return GeminiResult("unavailable", reason="network_error")
+        except ValueError:
+            return GeminiResult("unavailable", reason="invalid_response")
 
         return GeminiResult(
             status="completed",

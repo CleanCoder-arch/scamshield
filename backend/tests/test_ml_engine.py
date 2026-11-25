@@ -1,7 +1,7 @@
 import joblib
 import pytest
 
-from app.engines.entity_rules import extract_entities, redact_text
+from app.engines.entity_rules import analyze_sms_risk, extract_entities, redact_text
 from app.engines.ml_engine import MODELS_DIR, MLEngine
 from app.engines.url_features import FEATURE_NAMES, URLValidationError, extract_features, normalize_url
 
@@ -101,3 +101,36 @@ def test_upi_uri_and_bare_urls_are_kept_distinct_from_emails():
     assert entities["urls"] == ["http://example.org/A"]
     assert entities["emails"] == ["help@example.org"]
     assert entities["upi_ids"] == ["customer@samplebank"]
+
+
+@pytest.mark.parametrize(("message", "reason"), [
+    (
+        "Your ₹2,499 refund is ready. Approve the pending UPI collect request from "
+        "demo-refund@sampleupi and enter your UPI PIN to receive the money.",
+        "Requests a UPI PIN to receive a refund or payment.",
+    ),
+    (
+        "Congratulations! You were selected for a remote data entry job paying ₹5,000 per day. "
+        "Pay a ₹999 registration fee today to confirm your position.",
+        "Requests an upfront registration or training fee for a paid remote job.",
+    ),
+])
+def test_contextual_rules_raise_frontend_samples_to_high_risk(engine, message, reason):
+    result = engine.analyze_sms(message)
+    assert result["risk_level"] == "HIGH"
+    assert reason in result["reasons"]
+
+
+@pytest.mark.parametrize("message", [
+    "Your UPI refund is ready. You do not need to enter your UPI PIN to receive the money.",
+    "If asked to enter your UPI PIN to receive your refund, report it.",
+    "Enter your UPI PIN to pay the bill. Your earlier refund was processed separately.",
+    "Enter your UPI PIN only to send money, never to receive a refund.",
+    "A remote data entry job pays ₹5,000 per day. Never pay a registration fee to apply.",
+    "This remote job offers a salary of ₹50,000 per month. The company will pay the training fee.",
+    "Pay a registration fee of ₹500 to attend the evening training course.",
+])
+def test_contextual_rules_skip_safety_advice_and_ordinary_payments(message):
+    result = analyze_sms_risk(message, 0.1, has_links=False)
+    assert result["risk_level"] == "LOW"
+    assert all(not reason.startswith("Requests ") for reason in result["reasons"])

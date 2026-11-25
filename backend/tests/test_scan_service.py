@@ -2,12 +2,14 @@ import asyncio
 import json
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import httpx
 import pytest
+from google.genai import errors as gemini_errors
 from PIL import Image
 
 from app.core import redis_cache, scan_store
@@ -199,8 +201,10 @@ def test_gemini_image_uses_one_structured_call_with_inline_bytes():
 
 def test_gemini_skips_absent_credentials_and_exhausted_quota_and_rejects_unknown_labels():
     async def exercise():
-        missing = GeminiVision()
-        assert (await missing.classify_text("A redacted message")).status == "skipped"
+        missing = GeminiVision(api_key="   ")
+        assert await missing.classify_text("A redacted message") == GeminiResult(
+            "skipped", reason="missing_api_key"
+        )
         payload = {
             "scam_type": "unlisted-label", "confidence": 0.9,
             "explanation": "Classification", "actions": [],
@@ -208,9 +212,48 @@ def test_gemini_skips_absent_credentials_and_exhausted_quota_and_rejects_unknown
         generate = AsyncMock(return_value=SimpleNamespace(parsed=None, text=json.dumps(payload)))
         client = SimpleNamespace(models=SimpleNamespace(generate_content=generate))
         limited = GeminiVision(client=client, requests_per_minute=1)
-        assert (await limited.classify_text("First redacted message")).status == "unavailable"
-        assert (await limited.classify_text("Second redacted message")).status == "skipped"
+        assert await limited.classify_text("First redacted message") == GeminiResult(
+            "unavailable", reason="invalid_response"
+        )
+        assert await limited.classify_text("Second redacted message") == GeminiResult(
+            "skipped", reason="quota_exceeded"
+        )
         generate.assert_awaited_once()
+
+    asyncio.run(exercise())
+
+
+def test_gemini_key_loads_from_absolute_backend_dotenv(tmp_path, monkeypatch):
+    assert Settings.model_config["env_file"] == Path(__file__).resolve().parents[1] / ".env"
+
+    env_file = tmp_path / "backend" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("GEMINI_API_KEY=' fixture-file-key '\n", encoding="utf-8-sig")
+    monkeypatch.setitem(Settings.model_config, "env_file", env_file)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", " \t ")
+    assert Settings().gemini_api_key.get_secret_value() == "fixture-file-key"
+
+    monkeypatch.setenv("GEMINI_API_KEY", " fixture-environment-key ")
+    assert Settings().gemini_api_key.get_secret_value() == "fixture-environment-key"
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (gemini_errors.ClientError(429, {"status": "RESOURCE_EXHAUSTED"}), "quota_exceeded"),
+        (gemini_errors.ClientError(400, {"error": {"details": [{"reason": "API_KEY_INVALID"}]}}), "invalid_api_key"),
+        (gemini_errors.ServerError(503, {"message": "private diagnostic"}), "provider_error"),
+        (httpx.ConnectError("private diagnostic"), "network_error"),
+        (TimeoutError("private diagnostic"), "network_error"),
+    ],
+)
+def test_gemini_reports_safe_provider_failure_reasons(failure, reason):
+    async def exercise():
+        generate = AsyncMock(side_effect=failure)
+        client = SimpleNamespace(models=SimpleNamespace(generate_content=generate))
+        gemini = GeminiVision(client=client)
+        assert await gemini.classify_text("A redacted message") == GeminiResult("unavailable", reason=reason)
 
     asyncio.run(exercise())
 

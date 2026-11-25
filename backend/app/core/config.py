@@ -3,17 +3,18 @@ from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, PydanticBaseSettingsSource, SettingsConfigDict
 
 
-MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+MODELS_DIR = BACKEND_DIR / "models"
 MAX_TEXT_LENGTH = 8_000
 MAX_TEXT_BODY_BYTES = 128 * 1024
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=MODELS_DIR.parent / ".env",
+        env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8-sig",
         env_ignore_empty=True,
         extra="ignore",
@@ -38,14 +39,38 @@ class Settings(BaseSettings):
     max_image_pixels: int = Field(default=16_000_000, ge=1, le=20_000_000)
     max_urls: int = Field(default=6, ge=1, le=10)
     max_concurrent_scans: int = Field(default=4, ge=1, le=8)
-    scan_rate_limit: int = Field(default=12, ge=1, le=120)
+    scan_rate_limit: int = Field(default=10_000, ge=1, le=100_000)
     scan_rate_window_seconds: int = Field(default=3_600, ge=1, le=86_400)
     dedup_seconds: int = Field(default=20, ge=0, le=3_600)
     threat_timeout_seconds: float = Field(default=4, gt=0, le=15)
     enable_whois: bool = True
     gemini_timeout_seconds: float = Field(default=15, gt=0, le=60)
-    gemini_requests_per_minute: int = Field(default=10, ge=1, le=15)
-    gemini_requests_per_day: int = Field(default=200, ge=1, le=500)
+    gemini_requests_per_minute: int = Field(default=10, ge=1, le=60)
+    gemini_requests_per_day: int = Field(default=200, ge=1, le=10_000)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ):
+        def nonblank_environment():
+            values = env_settings()
+            key = values.get("gemini_api_key")
+            if isinstance(key, str) and not key.strip():
+                values.pop("gemini_api_key")
+            return values
+
+        return init_settings, nonblank_environment, dotenv_settings, file_secret_settings
+
+    @field_validator("gemini_api_key")
+    @classmethod
+    def clean_gemini_key(cls, value: SecretStr | None) -> SecretStr | None:
+        key = value.get_secret_value().strip() if value else ""
+        return SecretStr(key) if key else None
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
