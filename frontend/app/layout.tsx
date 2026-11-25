@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowUpRight, ShieldCheck } from "lucide-react";
 import "@fontsource-variable/manrope";
 import "./globals.css";
+import { LaunchSplash } from "@/components/launch-splash";
 import { SiteNav } from "@/components/site-nav";
 
 export const metadata: Metadata = {
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en-IN">
       <body>
         <a className="skip-link" href="#main-content">Skip to content</a>
+        <LaunchSplash />
         <header className="site-header">
           <div className="shell site-header-inner">
             <Link className="wordmark" href="/" aria-label="ScamShield home">
