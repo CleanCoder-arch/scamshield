@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { ArrowUpRight, ShieldCheck } from "lucide-react";
 import "@fontsource-variable/manrope";
@@ -6,14 +6,18 @@ import "./globals.css";
 import { LaunchSplash } from "@/components/launch-splash";
 import { SiteNav } from "@/components/site-nav";
 
+const backgroundColor = "#071018";
+
 export const metadata: Metadata = {
   title: { default: "ScamShield | Scam & Phishing Scanner", template: "%s | ScamShield" },
   description: "Check suspicious messages, screenshots, links, and payment details for scam indicators.",
 };
 
+export const viewport: Viewport = { colorScheme: "dark", themeColor: backgroundColor };
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en-IN">
+    <html lang="en-IN" style={{ backgroundColor, colorScheme: "dark" }}>
       <body>
         <a className="skip-link" href="#main-content">Skip to content</a>
         <LaunchSplash />

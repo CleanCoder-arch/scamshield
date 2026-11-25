@@ -97,14 +97,16 @@ async function setup(t: TestContext, reducedMotion = false) {
   return {
     ...clock,
     storage: window.sessionStorage,
-    splash: () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss opening animation"]'),
-    mount: (key = "initial") => act(async () => {
-      root.render(<StrictMode><LaunchSplash key={key} /></StrictMode>);
+    splash: () => container.querySelector<HTMLElement>(".launch-splash"),
+    render: (pathname = "/") => act(async () => {
+      root.render(
+        <StrictMode>
+          <LaunchSplash />
+          <main key={pathname}>{pathname}</main>
+        </StrictMode>,
+      );
     }),
     remove: () => act(async () => { root.render(null); }),
-    escape: () => act(async () => {
-      browser.document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    }),
   };
 }
 
@@ -114,22 +116,26 @@ test("renders no splash in the server response", () => {
 
 test("checks the first session after a frame and removes the splash after its hold and fade", async (t) => {
   const page = await setup(t);
-  await page.mount();
+  await page.render();
   assert.equal(page.splash(), null);
   assert.equal(page.storage.getItem(sessionKey), null);
   assert.equal(page.pendingFrames(), 1);
 
   await page.nextFrame();
   assert.notEqual(page.storage.getItem(sessionKey), null);
-  assert.equal(page.splash()?.dataset.phase, "visible");
+  const splash = page.splash();
+  assert.ok(splash);
+  assert.equal(splash.dataset.phase, "visible");
+  assert.equal(splash.tagName, "DIV");
+  assert.equal(splash.getAttribute("aria-hidden"), "true");
+  assert.equal(splash.querySelector('button, [role="button"], a, [tabindex]'), null);
+  assert.doesNotMatch(splash.textContent ?? "", /skip intro/i);
   assert.equal(page.pendingTimeouts(), 1);
 
   await page.advance(949);
   assert.equal(page.splash()?.dataset.phase, "visible");
   await page.advance(1);
   assert.equal(page.splash()?.dataset.phase, "leaving");
-  assert.equal(page.splash()?.disabled, true);
-  assert.equal(page.splash()?.getAttribute("aria-hidden"), "true");
   assert.equal(page.pendingTimeouts(), 1);
 
   await page.advance(299);
@@ -139,37 +145,44 @@ test("checks the first session after a frame and removes the splash after its ho
   assert.equal(page.pendingTimeouts(), 0);
 });
 
-test("click dismisses immediately and a same-session remount skips the splash", async (t) => {
+test("changing route content leaves the splash timer alone and does not replay it", async (t) => {
   const page = await setup(t);
-  await page.mount();
+  await page.render();
   await page.nextFrame();
   const splash = page.splash();
   assert.ok(splash);
-  await act(async () => { splash.click(); });
+
+  await page.advance(500);
+  await page.render("/rights");
+  assert.equal(page.splash(), splash);
+  assert.equal(page.pendingFrames(), 0);
+  await page.advance(450);
   assert.equal(page.splash()?.dataset.phase, "leaving");
   await page.advance(300);
   assert.equal(page.splash(), null);
 
-  await page.mount("same-session-navigation");
+  await page.render("/");
+  assert.equal(page.splash(), null);
+  assert.equal(page.pendingFrames(), 0);
+  assert.equal(page.pendingTimeouts(), 0);
+});
+
+test("a fresh mount in the same session skips the splash", async (t) => {
+  const page = await setup(t);
+  await page.render();
+  await page.nextFrame();
+  assert.equal(page.splash()?.dataset.phase, "visible");
+
+  await page.remove();
+  await page.render("/rights");
   await page.nextFrame();
   assert.equal(page.splash(), null);
   assert.equal(page.pendingTimeouts(), 0);
 });
 
-test("Escape dismisses the opening button without waiting for the hold timer", async (t) => {
-  const page = await setup(t);
-  await page.mount();
-  await page.nextFrame();
-  assert.equal(page.splash()?.dataset.phase, "visible");
-  await page.escape();
-  assert.equal(page.splash()?.dataset.phase, "leaving");
-  await page.advance(300);
-  assert.equal(page.splash(), null);
-});
-
 test("records a reduced-motion session without mounting or scheduling the splash", async (t) => {
   const page = await setup(t, true);
-  await page.mount();
+  await page.render();
   await page.nextFrame();
   assert.notEqual(page.storage.getItem(sessionKey), null);
   assert.equal(page.splash(), null);
@@ -178,13 +191,13 @@ test("records a reduced-motion session without mounting or scheduling the splash
 
 test("cancels pending frame and timeout work when the component unmounts", async (t) => {
   const page = await setup(t);
-  await page.mount();
+  await page.render();
   assert.equal(page.pendingFrames(), 1);
   await page.remove();
   assert.equal(page.pendingFrames(), 0);
   assert.equal(page.storage.getItem(sessionKey), null);
 
-  await page.mount("unmount-visible");
+  await page.render();
   await page.nextFrame();
   assert.equal(page.splash()?.dataset.phase, "visible");
   assert.equal(page.pendingTimeouts(), 1);

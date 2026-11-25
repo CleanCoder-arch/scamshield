@@ -2,7 +2,7 @@
 
 :root {
   color-scheme: dark;
-  --background: #0a111c;
+  --background: #071018;
   --surface: #101a29;
   --panel: #0c1522;
   --stroke: #23344b;
@@ -25,7 +25,7 @@
   --font-sans: var(--font-body);
 }
 
-html { min-height: 100%; }
+html { min-height: 100%; background-color: var(--background); }
 
 body {
   min-height: 100vh;
@@ -238,14 +238,15 @@ button:disabled { cursor: not-allowed; }
   display: grid;
   width: 100%;
   place-items: center;
+  pointer-events: none;
   padding: 24px;
   color: var(--text);
-  background: radial-gradient(ellipse at 50% 44%, #12362f, var(--background) 60%);
+  background-color: var(--background);
+  background-image: radial-gradient(ellipse at 50% 44%, #102b27, transparent 58%);
   transition: opacity var(--splash-fade) ease;
 }
 
-.launch-splash:focus-visible { outline-offset: -4px; }
-.launch-splash[data-phase="leaving"] { opacity: 0; pointer-events: none; }
+.launch-splash[data-phase="leaving"] { opacity: 0; }
 
 .launch-splash-content {
   display: grid;
@@ -302,8 +303,7 @@ button:disabled { cursor: not-allowed; }
 }
 
 .launch-splash-title > span { color: var(--accent); }
-.launch-splash-subtitle, .launch-splash-skip { color: var(--muted); }
-.launch-splash-skip { margin-top: 14px; font-size: 0.75rem; }
+.launch-splash-subtitle { color: var(--muted); }
 
 .launch-splash-progress {
   width: min(100%, 160px);

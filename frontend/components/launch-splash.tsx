@@ -35,38 +35,18 @@ export function LaunchSplash() {
   useEffect(() => {
     if (phase === "hidden") return;
 
-    if (phase === "leaving") {
-      const timeout = window.setTimeout(() => setPhase("hidden"), FADE_MS);
-      return () => window.clearTimeout(timeout);
-    }
+    const timeout = phase === "visible"
+      ? window.setTimeout(() => setPhase("leaving"), HOLD_MS)
+      : window.setTimeout(() => setPhase("hidden"), FADE_MS);
 
-    const dismiss = () => setPhase("leaving");
-    const timeout = window.setTimeout(dismiss, HOLD_MS);
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-    window.addEventListener("keydown", handleKey);
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener("keydown", handleKey);
-    };
+    return () => window.clearTimeout(timeout);
   }, [phase]);
 
   if (phase === "hidden") return null;
 
   return (
-    <button
-      type="button"
-      className="launch-splash"
-      data-phase={phase}
-      style={timing}
-      aria-label="Dismiss opening animation"
-      aria-hidden={phase === "leaving" || undefined}
-      disabled={phase === "leaving"}
-      onClick={() => setPhase("leaving")}
-    >
-      <span className="launch-splash-content" aria-hidden="true">
+    <div className="launch-splash" data-phase={phase} style={timing} aria-hidden="true">
+      <span className="launch-splash-content">
         <span className="launch-splash-radar">
           <span className="launch-splash-shield">
             <ShieldCheck size={38} strokeWidth={1.85} />
@@ -76,8 +56,7 @@ export function LaunchSplash() {
         <span className="launch-splash-title">Scam<span>Shield</span></span>
         <span className="launch-splash-subtitle">Check before you click.</span>
         <span className="launch-splash-progress" />
-        <span className="launch-splash-skip">Skip intro</span>
       </span>
-    </button>
+    </div>
   );
 }
