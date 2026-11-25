@@ -75,6 +75,16 @@ _JOB_FEE_REQUEST = re.compile(
     rf"(?:{_AMOUNT}\s+(?:(?:for|as)\s+(?:(?:an?|the|your)\s+)?)?)?"
     r"(?:registration|training)\s+(?:fees?|charges?)\b"
 )
+_DIGITAL_ARREST_ORDER = re.compile(
+    r"\b(?:(?:you\s+are|you['’]re)\s+(?:(?:now|being)\s+)?(?:under|placed\s+under)|"
+    r"placing\s+you\s+under|this\s+is)\s+(?:a\s+)?(?:digital|virtual|online)\s+arrest\b"
+)
+_REPORTED_ARREST_ORDER = re.compile(
+    r"\b(?:(?:someone|anyone|a\s+caller|a\s+scammer)\s+(?:says|claims|tells)|"
+    r"(?:digital\s+arrest|scam|fraud)\s+(?:advisory|alert|warning))\b"
+)
+UPI_PIN_RULE_REASON = "Requests a UPI PIN to receive a refund or payment."
+UPFRONT_JOB_RULE_REASON = "Requests an upfront registration or training fee for a paid remote job."
 
 
 def _compile_keywords(terms: str) -> tuple[tuple[str, re.Pattern[str]], ...]:
@@ -213,6 +223,14 @@ def _request_sentences(text: str, request: re.Pattern[str]) -> Iterator[str]:
             yield sentence
 
 
+def has_digital_arrest_order(message: str) -> bool:
+    """Recognise a direct claim of digital arrest for guidance selection."""
+    return any(
+        not _REPORTED_ARREST_ORDER.search(sentence)
+        for sentence in _request_sentences(message.lower(), _DIGITAL_ARREST_ORDER)
+    )
+
+
 def analyze_sms_risk(message: str, phishing_probability: float, *, has_links: bool) -> dict:
     """Apply CyberGuard's SMS scoring rules to model probability and text signals."""
     text = message.lower()
@@ -251,11 +269,11 @@ def analyze_sms_risk(message: str, phishing_probability: float, *, has_links: bo
         _affirms(sentence, _UPI_INBOUND) or (has_refund and _affirms(sentence, _REFUND_ACTION))
         for sentence in _request_sentences(text, _UPI_PIN_REQUEST)
     ):
-        add_points(35, "Requests a UPI PIN to receive a refund or payment.")
+        add_points(35, UPI_PIN_RULE_REASON)
     if _REMOTE_WORK.search(text) and _JOB_OFFER.search(text) and _JOB_COMPENSATION.search(text) and any(
         _request_sentences(text, _JOB_FEE_REQUEST)
     ):
-        add_points(55, "Requests an upfront registration or training fee for a paid remote job.")
+        add_points(55, UPFRONT_JOB_RULE_REASON)
 
     raw_score = sum(step["delta"] for step in adjustments)
     score = min(raw_score, 100)

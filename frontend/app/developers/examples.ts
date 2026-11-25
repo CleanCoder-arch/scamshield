@@ -181,6 +181,20 @@ const verdict = {
     explanation: "", actions: [], confidence: null,
   },
   score_breakdown: breakdown,
+  guidance: {
+    category_id: "low_risk",
+    category_label: "Low-risk check",
+    indicators: [],
+    steps: [
+      "Check the sender and the destination before you act.",
+      "Use an official app or website for payments and account changes.",
+    ],
+    reporting_steps: [
+      "If you lost money, call 1930 and contact your bank or payment provider immediately, ideally within the first hour.",
+      "File at cybercrime.gov.in. Include the 1930 acknowledgement number if you received one.",
+      "Keep screenshots, transaction references, and timestamps private for your bank or the authorities.",
+    ],
+  },
   warning_card_png_base64: null,
 };
 

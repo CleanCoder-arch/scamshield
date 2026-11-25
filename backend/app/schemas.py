@@ -89,6 +89,18 @@ class ScoreBreakdown(BaseModel):
     final_score: int = Field(ge=0, le=100)
 
 
+class PlaybookGuidance(BaseModel):
+    """Curated display text shared by the results and exported alerts."""
+
+    category_id: str = Field(max_length=32)
+    category_label: str = Field(max_length=60)
+    indicators: list[Annotated[str, StringConstraints(max_length=120)]] = Field(max_length=3)
+    steps: list[Annotated[str, StringConstraints(max_length=220)]] = Field(min_length=1, max_length=3)
+    reporting_steps: list[Annotated[str, StringConstraints(max_length=220)]] = Field(
+        min_length=1, max_length=3
+    )
+
+
 class ScanResponse(BaseModel):
     scan_id: UUID
     created_at: datetime
@@ -100,6 +112,7 @@ class ScanResponse(BaseModel):
     threat_intel: list[ThreatResult]
     ai: AIResult
     score_breakdown: ScoreBreakdown
+    guidance: PlaybookGuidance
     warning_card_png_base64: str | None = None
 
 

@@ -65,6 +65,14 @@ export interface ScoreBreakdown {
   final_score: number;
 }
 
+export interface PlaybookGuidance {
+  category_id: string;
+  category_label: string;
+  indicators: string[];
+  steps: string[];
+  reporting_steps: string[];
+}
+
 interface LocalResult {
   risk_score: number;
   risk_level: RiskLevel;
@@ -109,6 +117,7 @@ export interface ScanResult {
   threat_intel: ThreatResult[];
   ai: AIResult;
   score_breakdown: ScoreBreakdown;
+  guidance?: PlaybookGuidance;
   warning_card_png_base64: string | null;
 }
 
@@ -269,6 +278,19 @@ function isThreatResult(value: unknown): boolean {
   );
 }
 
+function isPlaybookGuidance(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.category_id === "string" &&
+    typeof value.category_label === "string" &&
+    isStringArray(value.indicators) &&
+    isStringArray(value.steps) &&
+    value.steps.length > 0 &&
+    isStringArray(value.reporting_steps) &&
+    value.reporting_steps.length > 0
+  );
+}
+
 function parseVerdict(payload: unknown): ScanResult {
   if (
     !isRecord(payload) ||
@@ -289,6 +311,7 @@ function parseVerdict(payload: unknown): ScanResult {
     !isStringArray(payload.ai.actions) ||
     !(payload.ai.confidence === null || isProbability(payload.ai.confidence)) ||
     !isScoreBreakdown(payload.score_breakdown) ||
+    !(payload.guidance === undefined || isPlaybookGuidance(payload.guidance)) ||
     !(
       payload.warning_card_png_base64 === null ||
       (

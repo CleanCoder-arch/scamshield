@@ -75,7 +75,10 @@ def test_service_redacts_ai_input_and_saves_only_metadata(storage_fails):
     assert confirmed_sources == ["safe_browsing"]
     for value in ("private@ybl", "98765", "1234", "example.com"):
         assert value not in redacted
+        assert value not in result.guidance.model_dump_json()
     assert "private@ybl" not in result.ai.explanation
+    assert result.guidance.category_id == "bank_kyc"
+    assert "Google Safe Browsing flagged a link" in result.guidance.indicators
     assert result.risk_score == 100
     assert result.warning_card_png_base64
     assert save.await_args.kwargs == {

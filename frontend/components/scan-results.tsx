@@ -1,13 +1,8 @@
-import Image from "next/image";
 import {
-  ArrowUpRight,
   ChevronDown,
   CircleAlert,
-  Download,
   Fingerprint,
-  ImageIcon,
   ListChecks,
-  Phone,
   Radar,
   ShieldAlert,
   ShieldCheck,
@@ -15,12 +10,13 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { describeAiLimitation, type RiskLevel, type ScanResult, type ScoreBreakdown, type ThreatResult } from "@/lib/api";
+import { IncidentExports } from "./incident-exports";
+import { CybercrimeLinks, ScanPlaybook } from "./scan-playbook";
 
 const PANEL = "rounded-2xl border border-stroke bg-surface";
 const MUTED = "text-muted";
 const ACCENT = "text-accent";
 const MONO = "font-mono";
-const SAFE_PORTAL = "https://cybercrime.gov.in/";
 
 const riskTones: Record<RiskLevel, { title: string; color: string; fill: string; pill: string }> = {
   LOW: {
@@ -149,17 +145,18 @@ function ModelEvidence({ model, title }: { model: ModelResult; title: string }) 
 
 function DetectionEvidence({ result }: { result: ScanResult }) {
   const hasModels = result.ml.sms !== null || result.ml.urls.length > 0;
+  const indicators = result.guidance?.indicators ?? result.entities.flags.map((flag) => labelFor(flagNames, flag));
   return (
     <section className={`${PANEL} min-w-0 p-4 sm:p-5`} aria-label="Detection evidence">
       <PanelHeading icon={ListChecks}>Detection evidence</PanelHeading>
       <div className="mb-4">
         <ScoreItems breakdown={result.score_breakdown} initialLabel="Local detection score" />
       </div>
-      {result.entities.flags.length > 0 && (
+      {indicators.length > 0 && (
         <ul className="mb-4 flex flex-wrap gap-2">
-          {result.entities.flags.map((flag) => (
-            <li key={flag} className="rounded-md border border-amber-300/25 bg-amber-300/8 px-2 py-1 text-xs text-amber-200">
-              {labelFor(flagNames, flag)}
+          {indicators.map((indicator) => (
+            <li key={indicator} className="rounded-md border border-amber-300/25 bg-amber-300/8 px-2 py-1 text-xs text-amber-200">
+              {indicator}
             </li>
           ))}
         </ul>
@@ -255,37 +252,6 @@ function ExtractedEntities({ entities }: { entities: ScanResult["entities"] }) {
   );
 }
 
-function WarningCard({ result }: { result: ScanResult }) {
-  const png = result.warning_card_png_base64;
-  if (result.risk_score < 40 || !png || png.length % 4 !== 0 || !/^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(png)) {
-    return null;
-  }
-  const src = `data:image/png;base64,${png}`;
-  return (
-    <section className={`${PANEL} min-w-0 p-4 sm:p-5`} aria-label="Warning card">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 [&>h3]:mb-0">
-        <PanelHeading icon={ImageIcon}>Warning card</PanelHeading>
-        <a
-          href={src}
-          download="scamshield-warning.png"
-          className={`inline-flex min-h-10 items-center gap-2 rounded-lg border border-stroke px-3 text-sm font-medium transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${ACCENT}`}
-        >
-          <Download size={16} aria-hidden="true" />
-          Download PNG
-        </a>
-      </div>
-      <Image
-        src={src}
-        width={800}
-        height={424}
-        alt={`ScamShield warning card. ${riskTones[result.risk_level].title}, score ${result.risk_score} out of 100.`}
-        className="mx-auto h-auto w-full max-w-[800px] rounded-xl border border-stroke"
-        unoptimized
-      />
-    </section>
-  );
-}
-
 export function SafetyPanel() {
   return (
     <section className={`${PANEL} border-amber-300/20 p-4 sm:p-5`} aria-label="Indian cybercrime help">
@@ -296,25 +262,7 @@ export function SafetyPanel() {
         <h2 className="text-sm font-semibold">Report cybercrime</h2>
       </div>
       <p className={`text-sm leading-relaxed ${MUTED}`}>For financial cyber fraud in India, call the national helpline promptly or file a report online.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <a
-          href="tel:1930"
-          aria-label="Call the national cybercrime helpline at 1930"
-          className={`${MONO} inline-flex min-h-10 items-center gap-2 rounded-lg border border-amber-300/30 bg-amber-300/8 px-3 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-300/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300`}
-        >
-          <Phone size={14} aria-hidden="true" />
-          1930
-        </a>
-        <a
-          href={SAFE_PORTAL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${MUTED}`}
-        >
-          cybercrime.gov.in
-          <ArrowUpRight size={14} aria-hidden="true" />
-        </a>
-      </div>
+      <CybercrimeLinks />
     </section>
   );
 }
@@ -332,7 +280,7 @@ export function ScanResults({ result }: { result: ScanResult }) {
           </h2>
           <div className="flex flex-wrap items-center gap-3">
             <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${tone.pill} ${tone.color}`}>{tone.title}</span>
-            <span className={`text-sm ${MUTED}`}>{labelFor(scamNames, result.scam_type)}</span>
+            <span className={`text-sm ${MUTED}`}>{result.guidance?.category_label ?? labelFor(scamNames, result.scam_type)}</span>
           </div>
           <p className={`mt-3 text-sm leading-relaxed [overflow-wrap:anywhere] ${MUTED}`}>{explanation}</p>
         </div>
@@ -354,7 +302,7 @@ export function ScanResults({ result }: { result: ScanResult }) {
         </div>
       </div>
 
-      {result.ai.actions.length > 0 && (
+      {result.guidance ? <ScanPlaybook guidance={result.guidance} /> : result.ai.actions.length > 0 && (
         <section className={`${PANEL} p-4 sm:p-5`} aria-label="Suggested next steps">
           <PanelHeading icon={ShieldCheck}>Suggested next steps</PanelHeading>
           <ul className={`list-disc space-y-2 pl-5 text-sm leading-relaxed marker:text-accent ${MUTED}`}>
@@ -368,7 +316,13 @@ export function ScanResults({ result }: { result: ScanResult }) {
         <ThreatEvidence checks={result.threat_intel} ai={result.ai} />
       </div>
       <ExtractedEntities entities={result.entities} />
-      <WarningCard result={result} />
+      <IncidentExports
+        createdAt={result.created_at}
+        riskScore={result.risk_score}
+        riskLevel={result.risk_level}
+        guidance={result.guidance}
+        png={result.warning_card_png_base64}
+      />
     </section>
   );
 }

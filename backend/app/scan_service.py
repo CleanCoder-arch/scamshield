@@ -12,6 +12,7 @@ from app.core.scan_store import ScanStore, ScanStoreUnavailableError
 from app.engines.entity_rules import extract_entities, redact_text
 from app.engines.llm_vision import GeminiResult, GeminiVision
 from app.engines.ml_engine import MLEngine
+from app.engines.playbooks import build_guidance, local_scam_hint
 from app.engines.threat_intel import ThreatIntel
 from app.schemas import (
     AIReason,
@@ -170,7 +171,18 @@ class ScanService:
         breakdown, scam_type = merge_assessment(local_score, entities, intel, ai)
         risk_score = breakdown.final_score
         risk_level = RiskLevel.for_score(risk_score)
-        png = await asyncio.to_thread(render_warning_card, risk_score, risk_level, scam_type)
+        guidance = build_guidance(
+            scam_type=scam_type,
+            risk_level=risk_level,
+            entity_flags=entities.flags,
+            provider_hits=hits,
+            ml=ml,
+            local_hint=local_scam_hint(text, ml),
+            ai_corroborated=any(item.rule == "AI classification" for item in breakdown.adjustments),
+        )
+        png = await asyncio.to_thread(
+            render_warning_card, risk_score, risk_level, scam_type, guidance=guidance
+        )
         result = ScanResponse(
             scan_id=uuid4(),
             created_at=datetime.now(UTC),
@@ -182,6 +194,7 @@ class ScanService:
             threat_intel=intel,
             ai=ai,
             score_breakdown=breakdown,
+            guidance=guidance,
             warning_card_png_base64=b64encode(png).decode("ascii") if png else None,
         )
         try:
