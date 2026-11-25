@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowUpRight, CodeXml, ScanLine } from "lucide-react";
+import { ArrowUpRight, Scale, ScanLine } from "lucide-react";
 
 export function SiteNav() {
   const path = usePathname();
@@ -12,10 +12,10 @@ export function SiteNav() {
       <Link href="/" aria-current={path === "/" ? "page" : undefined}>
         <ScanLine size={16} aria-hidden="true" /> Scanner
       </Link>
-      <Link href="/developers" aria-current={path === "/developers" ? "page" : undefined}>
-        <CodeXml size={17} aria-hidden="true" /> Developer API
+      <Link href="/rights" aria-current={path === "/rights" ? "page" : undefined}>
+        <Scale size={17} aria-hidden="true" /> Know Your Rights
       </Link>
-      <a className="nav-report" href="https://cybercrime.gov.in/" target="_blank" rel="noreferrer">
+      <a className="nav-report" href="https://cybercrime.gov.in/" target="_blank" rel="noopener noreferrer">
         Report a scam <ArrowUpRight size={15} aria-hidden="true" />
       </a>
     </nav>
